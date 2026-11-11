@@ -246,7 +246,7 @@ b.bc { font-weight: 600; }
         <li><b class="bc">Open (applied field).</b> The bare edge of a junction. No current leaves the electrodes, and the field at the edge is held at the applied value φ<sub>x</sub> = H, which is how a magnetic field enters a long junction.</li>
         <li><b class="bc">Short circuit.</b> The two electrodes are joined at the end by a superconducting short, so the voltage there is zero and the phase at the end is held at a whole multiple of 2π.</li>
         <li><b class="bc">Periodic (ring).</b> The line closes on itself, as in an annular junction. Fluxons placed on the ring are trapped and counted.</li>
-        <li><b class="bc">Absorbing (infinite line).</b> A hidden lossy buffer, 30 λ<sub>J0</sub> long, sits beyond the window. Waves and fluxons that leave do not come back, as if the line went on forever. Fluxons that leave stop inside the buffer.</li>
+        <li><b class="bc">Absorbing (infinite line).</b> A hidden buffer, 30 λ<sub>J0</sub> long, sits beyond the window. In it the plasma frequency falls smoothly to zero, so a fluxon that enters spreads into a plain 2π phase step, and the buffer ends in a matched resistor, R = Z, that absorbs the step and any waves. Waves and fluxons that leave do not come back, as if the line went on forever, however many leave.</li>
       </ul>
     </div>
   </section>
@@ -271,7 +271,7 @@ b.bc { font-weight: 600; }
 
   // Grid: visible nodes plus hidden buffers for absorbing ends.
   let periodic = false, Nv = 0, nb0 = 0, nb1 = 0, M = 0;
-  let phi, vel, Zn, Zh, wp2, damp, flux;
+  let phi, vel, Zn, Zh, wp2, damp, flux, gfac;
   let Zp = null, Wp = null;     // visible profiles of Z/Z0 and omega_p/omega_p0
   let W = 0, t = 0, vMeanEMA = 0;
 
@@ -293,12 +293,18 @@ b.bc { font-weight: 600; }
     for (let g = 0; g < M; g++) {
       const i = Math.min(Nv - 1, Math.max(0, g - nb0));
       Zn[g] = Zp[i];
-      wp2[g] = Wp[i] * Wp[i];
-      let d = S.alpha;
-      if (g < nb0) { const s = (nb0 - g) / nb0; d += 3 * s * s; }
-      if (g >= nb0 + Nv) { const s = (g - nb0 - Nv + 1) / nb1; d += 3 * s * s; }
-      damp[g] = d;
+      // Absorbing buffer: omega_p and the bias fall to zero over the first 60% (a fluxon becomes a 2*pi step
+      // moving at c), light damping grows, and a matched load R = Z at the far end absorbs what arrives.
+      let s = 0;
+      if (g < nb0) s = (nb0 - g) / nb0;
+      if (g >= nb0 + Nv) s = (g - nb0 - Nv + 1) / nb1;
+      const f = s > 0 ? Math.cos(0.5 * Math.PI * Math.min(1, s / 0.6)) ** 2 : 1;
+      wp2[g] = Wp[i] * Wp[i] * f;
+      gfac[g] = f;
+      damp[g] = S.alpha + 0.3 * s * s;
     }
+    if (nb0) damp[0] += 2 / H_STEP;       // matched load on the half cell at the far end
+    if (nb1) damp[M - 1] += 2 / H_STEP;
     for (let g = 0; g < M; g++) {
       const g2 = (g + 1) % M;
       Zh[g] = 0.5 * (Zn[g] + Zn[g2]);
@@ -315,7 +321,7 @@ b.bc { font-weight: 600; }
     Zp = resample(Zp, Nv); Wp = resample(Wp, Nv);
     phi = new Float64Array(M); vel = new Float64Array(M);
     Zn = new Float64Array(M); Zh = new Float64Array(M); wp2 = new Float64Array(M);
-    damp = new Float64Array(M); flux = new Float64Array(M);
+    damp = new Float64Array(M); flux = new Float64Array(M); gfac = new Float64Array(M);
     if (oldPhi && oldNv === Nv) {
       for (let i = 0; i < Nv; i++) { phi[nb0 + i] = oldPhi[oldNb0 + i]; vel[nb0 + i] = oldVel[oldNb0 + i]; }
     } else if (oldPhi) {
@@ -347,7 +353,7 @@ b.bc { font-weight: 600; }
         if (periodic) Fp = seam;
         else { Fp = rightOpen ? S.H / Zn[n - 1] : 0; cell = h / 2; }
       } else Fp = flux[g];
-      const a = Zn[g] * (Fp - Fm) / cell - wp2[g] * Math.sin(phi[g]) + g0 * Zn[g];
+      const a = Zn[g] * (Fp - Fm) / cell - wp2[g] * Math.sin(phi[g]) + g0 * Zn[g] * gfac[g];
       vel[g] = (vel[g] + DT * a) / (1 + DT * damp[g]);
     }
     if (!periodic) {
