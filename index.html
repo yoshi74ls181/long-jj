@@ -361,6 +361,8 @@ b.bc { font-weight: 600; }
       if (S.right === "short") phi[n - 1] = TWO_PI * Math.round(phi[n - 1] / TWO_PI);
     }
     t += DT;
+    // The map gets one row per fixed interval of simulated time, whatever the speed setting.
+    if (++mapTick >= MAP_EVERY) { mapTick = 0; drawVF(); mapPush(); }
   }
 
   // ---- excitations (exact sine-Gordon shapes in local units) ----
@@ -667,10 +669,11 @@ b.bc { font-weight: 600; }
   }
 
   // space-time map: offscreen buffer one column per grid cell, rows scroll down
-  const MAP_ROWS = 220;
+  const MAP_ROWS = 220, MAP_EVERY = 20;   // one row per 20 steps = 0.4/omega_p0; 220 rows span 88/omega_p0
+  let mapTick = 0;
   let mapOff = null, mapCtx = null, mapCols = 0;
   function mapReset() {
-    mapCols = Math.min(Nv, 600);
+    mapCols = Math.min(Nv, 600); mapTick = 0;
     mapOff = document.createElement("canvas"); mapOff.width = mapCols; mapOff.height = MAP_ROWS;
     mapCtx = mapOff.getContext("2d");
     if (C.midRGB) { mapCtx.fillStyle = C.mid; mapCtx.fillRect(0, 0, mapCols, MAP_ROWS); }
@@ -760,7 +763,7 @@ b.bc { font-weight: 600; }
   function loop() {
     if (S.running && !drag) {
       for (let k = 0; k < S.speed; k++) step();
-      drawDials(); drawPhi(); drawVF(); mapPush(); drawMap();
+      drawDials(); drawPhi(); drawMap();
       if ((frameNo++ & 7) === 0) readouts();
     }
     requestAnimationFrame(loop);
@@ -809,7 +812,7 @@ b.bc { font-weight: 600; }
   });
   $("preset").addEventListener("change", (e) => { if (e.target.value) applyPreset(e.target.value); e.target.value = ""; });
   $("run").addEventListener("click", () => { S.running = !S.running; syncControls(); });
-  $("stepbtn").addEventListener("click", () => { for (let k = 0; k < S.speed; k++) step(); drawAll(); mapPush(); drawMap(); });
+  $("stepbtn").addEventListener("click", () => { for (let k = 0; k < S.speed; k++) step(); drawAll(); });
   $("reset").addEventListener("click", groundState);
   $("example").addEventListener("click", example);
   document.querySelectorAll("[data-place]").forEach((b) => b.addEventListener("click", () => {
