@@ -1,0 +1,871 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Long Junction Simulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: an instrument bench. Live plots stacked on the left, a control rack on the right; one column on phones. */
+:root {
+  --bg: #f3f5f8;
+  --panel: #ffffff;
+  --ink: #141820;
+  --ink2: #586273;
+  --line: #d9dee6;
+  --grid: #e9edf2;
+  --phi: #2459c9;
+  --volt: #cf4f22;
+  --field: #11896a;
+  --zcol: #7442c8;
+  --wcol: #b07a00;
+  --pos: #d23f3b;
+  --neg: #2766d6;
+  --mid: #f4f5f7;
+  --accent: #2459c9;
+  --accent-ink: #ffffff;
+  --chip: #eef2f9;
+  --font-head: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1116; --panel: #161b22; --ink: #e6e9ef; --ink2: #98a2b3; --line: #2b323d; --grid: #1f252d;
+    --phi: #74a3ff; --volt: #ff8b5e; --field: #3fd19f; --zcol: #b391ff; --wcol: #f2bd45;
+    --pos: #ff6b66; --neg: #5d97ff; --mid: #1b2129; --accent: #74a3ff; --accent-ink: #0b0f15; --chip: #1d2530;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1116; --panel: #161b22; --ink: #e6e9ef; --ink2: #98a2b3; --line: #2b323d; --grid: #1f252d;
+  --phi: #74a3ff; --volt: #ff8b5e; --field: #3fd19f; --zcol: #b391ff; --wcol: #f2bd45;
+  --pos: #ff6b66; --neg: #5d97ff; --mid: #1b2129; --accent: #74a3ff; --accent-ink: #0b0f15; --chip: #1d2530;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--ink); }
+body {
+  font-family: var(--font-body); font-size: 14px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px 32px;
+}
+.wrap { max-width: 1280px; margin: 0 auto; display: grid; gap: 12px; }
+header h1 { font-family: var(--font-head); font-weight: 600; font-size: 1.7rem; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+header p { margin: 4px 0 0; color: var(--ink2); max-width: 70ch; }
+.bench { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: stretch; }
+.rack { align-content: start; }
+@media (max-width: 900px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+/* The plot column stretches to the height of the control rack; the canvases share the extra height. */
+.plots { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.plots > .card { display: flex; flex-direction: column; }
+.plots > .card > h2 { flex: none; }
+.plots > .card:nth-child(1) { flex: 2.4 1 auto; }
+.plots > .card:nth-child(2) { flex: 1.3 1 auto; }
+.plots > .card:nth-child(3) { flex: 1.4 1 auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-width: 0; }
+.card h2 { font-family: var(--font-head); font-weight: 500; font-size: 0.95rem; margin: 0 0 3px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.card h2 .hint { font-family: var(--font-body); font-weight: 400; font-size: 0.8rem; color: var(--ink2); }
+canvas { display: block; width: 100%; touch-action: none; }
+#dials { flex: 1 1 0; min-height: 100px; cursor: crosshair; }
+#phiplot { flex: 1.4 1 0; min-height: 140px; cursor: crosshair; }
+#vfplot { height: 150px; }
+#map { flex: 1 1 0; min-height: 130px; }
+#zprof, #wprof { flex: 1 1 0; min-height: 70px; cursor: ns-resize; }
+.readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.ro { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 5px 10px; }
+.ro .k { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink2); }
+.ro .v { font-family: var(--font-mono); font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.8rem; color: var(--ink); }
+.legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; background: var(--sw); }
+.rack { display: grid; gap: 8px; min-width: 0; }
+fieldset { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); margin: 0; padding: 4px 12px 8px; display: grid; gap: 6px; min-width: 0; }
+legend { font-family: var(--font-head); font-weight: 500; font-size: 0.85rem; padding: 0 4px; }
+.row { display: grid; gap: 2px; }
+.row label, .lab { font-size: 0.8rem; color: var(--ink2); display: flex; justify-content: space-between; gap: 8px; }
+.row label output { font-family: var(--font-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+select, button { font: inherit; font-size: 0.85rem; color: var(--ink); background: var(--chip); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
+select { width: 100%; }
+button { cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button:focus-visible, select:focus-visible, input:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.btns button { flex: 1 1 auto; }
+.slider { display: flex; gap: 8px; align-items: center; }
+.slider input { flex: 1 1 auto; min-width: 0; }
+.slider .zero { flex: none; padding: 3px 9px; font-size: 0.78rem; }
+.card h2 .zero { margin-left: auto; font-family: var(--font-body); font-weight: 500; padding: 3px 9px; font-size: 0.78rem; }
+.ends { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.note { font-size: 0.78rem; color: var(--ink2); margin: 0; }
+.seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.seg button { padding: 5px 2px; font-size: 0.78rem; }
+.btns { display: grid; grid-template-columns: 4.6em 3.6em max-content minmax(0, 1fr); gap: 6px; }
+.btns #reset { padding: 5px 8px; }
+.btns button { padding: 5px 4px; font-size: 0.8rem; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card h2 select.mini { margin-left: auto; width: auto; padding: 2px 6px; font-family: var(--font-body); font-weight: 400; font-size: 0.78rem; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.model { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.model .card p, .model .card li { max-width: 68ch; }
+.model ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; }
+.eq { font-family: var(--font-mono); font-size: 0.9rem; background: var(--chip); border-radius: 7px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
+.model h3 { font-family: var(--font-head); font-weight: 500; font-size: 0.95rem; margin: 0 0 4px; }
+b.bc { font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Long Josephson junction simulator</h1>
+    <p>A live solution of the sine-Gordon equation for a long junction. Press, drag and release on the phase plot to launch a fluxon, antifluxon, breather or plasma wave at the velocity you drag, choose what each end of the line does, and paint the line impedance and plasma frequency along its length.</p>
+  </header>
+
+  <div class="readouts" aria-live="off">
+    <div class="ro"><div class="k">Time ω<sub>p0</sub>t</div><div class="v" id="ro-t">0</div></div>
+    <div class="ro"><div class="k">Net fluxons</div><div class="v" id="ro-n">0</div></div>
+    <div class="ro"><div class="k">Energy / E<sub>0</sub></div><div class="v" id="ro-e">0</div></div>
+    <div class="ro"><div class="k">Mean voltage / (ħω<sub>p0</sub>/2e)</div><div class="v" id="ro-v">0</div></div>
+  </div>
+
+  <div class="bench">
+    <div class="plots">
+      <div class="card">
+        <h2><span>Pendulum row</span> <span class="hint">pendula on a torsion wire, as in Fig. 3 of the review; each hangs at the local phase φ, straight down at φ = 0</span></h2>
+        <canvas id="dials" tabindex="0" aria-label="Row of phase dials; click to place the selected excitation"></canvas>
+        <h2 style="margin-top:4px"><span>Phase φ(x) modulo 2π</span> <span class="hint">a fluxon shows as a jump from π to −π; press, drag sideways and release to launch the selected excitation</span></h2>
+        <canvas id="phiplot" tabindex="0" aria-label="Phase against position; click to place the selected excitation"></canvas>
+      </div>
+      <div class="card">
+        <h2><span>Space–time map</span> <span class="hint" id="map-hint">field φ<sub>x</sub>; newest at the top</span><select id="mapq" class="mini" aria-label="Quantity shown in the space–time map"><option value="field">Field φₓ</option><option value="volt">Voltage φₜ</option></select></h2>
+        <canvas id="map" aria-label="Space-time map"></canvas>
+      </div>
+      <div class="card">
+        <h2><span>Line impedance Z(x)/Z<sub>0</sub></span> <span class="hint">drag up or down to paint</span><button type="button" class="zero" id="z-reset">Reset to uniform</button></h2>
+        <canvas id="zprof" tabindex="0" aria-label="Impedance profile; drag to paint"></canvas>
+        <h2 style="margin-top:4px"><span>Plasma frequency ω<sub>p</sub>(x)/ω<sub>p0</sub></span> <span class="hint">drag up or down to paint</span><button type="button" class="zero" id="w-reset">Reset to uniform</button></h2>
+        <canvas id="wprof" tabindex="0" aria-label="Plasma frequency profile; drag to paint"></canvas>
+      </div>
+    </div>
+
+    <div class="rack">
+      <fieldset>
+        <legend>Run and drive</legend>
+        <div class="btns">
+          <button class="primary" id="run" type="button">Pause</button>
+          <button id="stepbtn" type="button">Step</button>
+          <button id="reset" type="button">Ground state</button>
+          <button id="example" type="button" title="Load the example: a fluxon passing a breather">Example</button>
+        </div>
+        <div class="row">
+          <label for="speed"><span>Simulation speed</span> <output id="speed-o"></output></label>
+          <input id="speed" type="range" min="1" max="60" step="1" value="20">
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Ends of the line</legend>
+        <div class="ends">
+          <div class="row"><label for="bcl">Left end</label>
+            <select id="bcl">
+              <option value="open">Open (applied field)</option>
+              <option value="short">Short circuit</option>
+              <option value="periodic">Periodic (ring)</option>
+              <option value="absorbing">Absorbing (infinite line)</option>
+            </select></div>
+          <div class="row"><label for="bcr">Right end</label>
+            <select id="bcr">
+              <option value="open">Open (applied field)</option>
+              <option value="short">Short circuit</option>
+              <option value="periodic">Periodic (ring)</option>
+              <option value="absorbing">Absorbing (infinite line)</option>
+            </select></div>
+        </div>
+        <p class="note" id="bc-note">Periodic joins both ends into a ring.</p>
+        <div class="row">
+          <label for="hfield"><span>Applied field at open ends, φ<sub>x</sub></span> <output id="hfield-o"></output></label>
+          <div class="slider"><input id="hfield" type="range" min="-4" max="4" step="0.05" value="0"><button type="button" class="zero" id="hfield-zero" aria-label="Set the applied field to zero">Zero</button></div>
+        </div>
+        <div class="row">
+          <label for="len"><span>Length L/λ<sub>J0</sub></span> <output id="len-o"></output></label>
+          <input id="len" type="range" min="20" max="160" step="10" value="80">
+        </div>
+        <div class="row">
+          <label for="gamma"><span>Bias γ = j/j<sub>c0</sub></span> <output id="gamma-o"></output></label>
+          <div class="slider"><input id="gamma" type="range" min="-1.2" max="1.2" step="0.01" value="0"><button type="button" class="zero" id="gamma-zero" aria-label="Set the bias to zero">Zero</button></div>
+        </div>
+        <div class="row">
+          <label for="alpha"><span>Shunt loss α</span> <output id="alpha-o"></output></label>
+          <input id="alpha" type="range" min="0" max="1" step="0.01" value="0.18">
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Place by dragging</legend>
+        <div class="seg" role="group" aria-label="Excitation to place">
+          <button type="button" data-place="fluxon" aria-pressed="true">Fluxon</button>
+          <button type="button" data-place="antifluxon" aria-pressed="false">Antifluxon</button>
+          <button type="button" data-place="breather" aria-pressed="false">Breather</button>
+          <button type="button" data-place="plasma" aria-pressed="false" title="Plasma wave">Plasma</button>
+        </div>
+        <p class="note">Press on the phase plot or pendulum row, drag sideways to set the velocity u = v/c̄ and, for a breather or plasma wave, up or down to set its size, then release. The simulation pauses and previews while you drag.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Line profile</legend>
+        <div class="row"><label for="preset">Preset</label>
+          <select id="preset">
+            <option value="">Choose a preset…</option>
+            <option value="uniform">Uniform line</option>
+            <option value="zstep">Impedance step, Z × 3 in the right half</option>
+            <option value="zisland">High-impedance island, Z × 4 in the middle</option>
+            <option value="ztaper">Impedance taper, Z from 1 to 4</option>
+            <option value="wbarrier">Plasma-frequency barrier, ωₚ × 1.6 in the middle</option>
+            <option value="wwell">Plasma-frequency well, ωₚ × 0.6 in the middle</option>
+          </select></div>
+        <div class="row">
+          <label for="brush"><span>Brush width / λ<sub>J0</sub></span> <output id="brush-o"></output></label>
+          <input id="brush" type="range" min="0.5" max="20" step="0.5" value="4">
+        </div>
+      </fieldset>
+    </div>
+  </div>
+
+  <section class="model">
+    <div class="card">
+      <h3>The equation being solved</h3>
+      <p class="eq">φ<sub>tt</sub> + α φ<sub>t</sub> = Z ∂<sub>x</sub>(Z<sup>−1</sup> ∂<sub>x</sub>φ) − ω<sub>p</sub><sup>2</sup> sin φ + γ Z</p>
+      <p>Position is in Josephson lengths λ<sub>J0</sub> and time in units of 1/ω<sub>p0</sub>, both at the reference values Z<sub>0</sub> and ω<sub>p0</sub>. Z(x) and ω<sub>p</sub>(x) are the local line impedance and plasma frequency relative to that reference. The Swihart velocity c̄ stays uniform, so the local Josephson length is c̄/ω<sub>p</sub>. The energy is in units of E<sub>0</sub>, the Josephson energy stored in one λ<sub>J0</sub> of the reference line, so a fluxon at rest on it has energy 8. A fluxon's rest energy scales as 8ω<sub>p</sub>/Z: fluxons are pushed towards low plasma frequency and high impedance, and an impedance step reflects plasma waves.</p>
+      <p class="note">The line is discretized at λ<sub>J0</sub>/20 and stepped with a time step of 0.02/ω<sub>p0</sub>; the shunt loss is treated implicitly.</p>
+    </div>
+    <div class="card">
+      <h3>What each end does</h3>
+      <ul>
+        <li><b class="bc">Open (applied field).</b> The bare edge of a junction. No current leaves the electrodes, and the field at the edge is held at the applied value φ<sub>x</sub> = H, which is how a magnetic field enters a long junction.</li>
+        <li><b class="bc">Short circuit.</b> The two electrodes are joined at the end by a superconducting short, so the voltage there is zero and the phase at the end is held at a whole multiple of 2π.</li>
+        <li><b class="bc">Periodic (ring).</b> The line closes on itself, as in an annular junction. Fluxons placed on the ring are trapped and counted.</li>
+        <li><b class="bc">Absorbing (infinite line).</b> A hidden lossy buffer, 30 λ<sub>J0</sub> long, sits beyond the window. Waves and fluxons that leave do not come back, as if the line went on forever. Fluxons that leave stop inside the buffer.</li>
+      </ul>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const TWO_PI = 2 * Math.PI;
+  const H_STEP = 0.05;      // grid spacing, units of lambda_J0
+  const DT = 0.02;          // time step, units of 1/omega_p0
+  const BUF = 30;           // absorbing buffer length, lambda_J0
+  const Z_MIN = 0.25, Z_MAX = 4, W_MIN = 0.25, W_MAX = 3;
+
+  const $ = (id) => document.getElementById(id);
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const S = {
+    L: 80, left: "open", right: "absorbing", H: 0, gamma: 0, alpha: 0.01, speed: 20,
+    running: !reduceMotion, place: "fluxon", u: 0.5, Om: 0.6, Apl: 0.35, brush: 4, mapQ: "field",
+  };
+
+  // Grid: visible nodes plus hidden buffers for absorbing ends.
+  let periodic = false, Nv = 0, nb0 = 0, nb1 = 0, M = 0;
+  let phi, vel, Zn, Zh, wp2, damp, flux;
+  let Zp = null, Wp = null;     // visible profiles of Z/Z0 and omega_p/omega_p0
+  let W = 0, t = 0, vMeanEMA = 0;
+
+  function visibleCount(L, per) { return per ? Math.round(L / H_STEP) : Math.round(L / H_STEP) + 1; }
+  function xOf(g) { return (g - nb0) * H_STEP; }
+
+  function resample(old, n) {
+    if (!old) return new Float64Array(n).fill(1);
+    const out = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const s = (old.length - 1) * i / Math.max(1, n - 1);
+      const a = Math.floor(s), b = Math.min(old.length - 1, a + 1), f = s - a;
+      out[i] = old[a] * (1 - f) + old[b] * f;
+    }
+    return out;
+  }
+
+  function coefficients() {
+    for (let g = 0; g < M; g++) {
+      const i = Math.min(Nv - 1, Math.max(0, g - nb0));
+      Zn[g] = Zp[i];
+      wp2[g] = Wp[i] * Wp[i];
+      let d = S.alpha;
+      if (g < nb0) { const s = (nb0 - g) / nb0; d += 3 * s * s; }
+      if (g >= nb0 + Nv) { const s = (g - nb0 - Nv + 1) / nb1; d += 3 * s * s; }
+      damp[g] = d;
+    }
+    for (let g = 0; g < M; g++) {
+      const g2 = (g + 1) % M;
+      Zh[g] = 0.5 * (Zn[g] + Zn[g2]);
+    }
+  }
+
+  function build() {
+    periodic = S.left === "periodic";
+    const oldPhi = phi, oldVel = vel, oldNb0 = nb0, oldNv = Nv;
+    Nv = visibleCount(S.L, periodic);
+    nb0 = (!periodic && S.left === "absorbing") ? Math.round(BUF / H_STEP) : 0;
+    nb1 = (!periodic && S.right === "absorbing") ? Math.round(BUF / H_STEP) : 0;
+    M = nb0 + Nv + nb1;
+    Zp = resample(Zp, Nv); Wp = resample(Wp, Nv);
+    phi = new Float64Array(M); vel = new Float64Array(M);
+    Zn = new Float64Array(M); Zh = new Float64Array(M); wp2 = new Float64Array(M);
+    damp = new Float64Array(M); flux = new Float64Array(M);
+    if (oldPhi && oldNv === Nv) {
+      for (let i = 0; i < Nv; i++) { phi[nb0 + i] = oldPhi[oldNb0 + i]; vel[nb0 + i] = oldVel[oldNb0 + i]; }
+    } else if (oldPhi) {
+      for (let i = 0; i < Nv; i++) {
+        const j = Math.min(oldNv - 1, Math.round(i * (oldNv - 1) / Math.max(1, Nv - 1)));
+        phi[nb0 + i] = oldPhi[oldNb0 + j]; vel[nb0 + i] = oldVel[oldNb0 + j];
+      }
+    }
+    for (let g = 0; g < nb0; g++) phi[g] = phi[nb0];
+    for (let g = nb0 + Nv; g < M; g++) phi[g] = phi[nb0 + Nv - 1];
+    W = periodic ? Math.round((phi[M - 1] - phi[0]) / TWO_PI) : 0;
+    coefficients();
+    mapReset();
+  }
+
+  function step() {
+    const n = M, h = H_STEP, g0 = S.gamma;
+    for (let g = 0; g < n - 1; g++) flux[g] = (phi[g + 1] - phi[g]) / (h * Zh[g]);
+    let seam = 0;
+    if (periodic) seam = (phi[0] + TWO_PI * W - phi[n - 1]) / (h * Zh[n - 1]);
+    const leftOpen = !periodic && S.left === "open", rightOpen = !periodic && S.right === "open";
+    for (let g = 0; g < n; g++) {
+      let Fm, Fp, cell = h;
+      if (g === 0) {
+        if (periodic) Fm = seam;
+        else { Fm = leftOpen ? S.H / Zn[0] : 0; cell = h / 2; }
+      } else Fm = flux[g - 1];
+      if (g === n - 1) {
+        if (periodic) Fp = seam;
+        else { Fp = rightOpen ? S.H / Zn[n - 1] : 0; cell = h / 2; }
+      } else Fp = flux[g];
+      const a = Zn[g] * (Fp - Fm) / cell - wp2[g] * Math.sin(phi[g]) + g0 * Zn[g];
+      vel[g] = (vel[g] + DT * a) / (1 + DT * damp[g]);
+    }
+    if (!periodic) {
+      if (S.left === "short") vel[0] = 0;
+      if (S.right === "short") vel[n - 1] = 0;
+    }
+    for (let g = 0; g < n; g++) phi[g] += DT * vel[g];
+    // A superconducting short holds the phase at the end at a whole multiple of 2*pi.
+    if (!periodic) {
+      if (S.left === "short") phi[0] = TWO_PI * Math.round(phi[0] / TWO_PI);
+      if (S.right === "short") phi[n - 1] = TWO_PI * Math.round(phi[n - 1] / TWO_PI);
+    }
+    t += DT;
+  }
+
+  // ---- excitations (exact sine-Gordon shapes in local units) ----
+  function localW(x) {
+    const i = Math.min(Nv - 1, Math.max(0, Math.round(x / H_STEP)));
+    return Wp[i];
+  }
+  function addProfile(f) {
+    const eps = 1e-3;
+    for (let g = 0; g < M; g++) {
+      const x = xOf(g);
+      phi[g] += f(x, 0);
+      vel[g] += (f(x, eps) - f(x, -eps)) / (2 * eps);
+    }
+  }
+  function wrapDist(x, x0) {
+    let d = x - x0;
+    if (periodic) { const L = Nv * H_STEP; d -= L * Math.round(d / L); }
+    return d;
+  }
+  function addKink(x0, sgn, u) {
+    const w = localW(x0), lg = 1 / Math.sqrt(1 - u * u);
+    const K = (d) => 4 * Math.atan(Math.exp(w * lg * d));
+    if (periodic) {
+      // On a ring of circumference L the kink and its two nearest images give a profile that
+      // rises by 2*pi from x = 0 to x = L, so the winding across the seam grows by one.
+      const L = Nv * H_STEP;
+      addProfile((x, tt) => {
+        const d = x - x0 - u * tt;
+        return sgn * (K(d) + K(d + L) - TWO_PI + K(d - L));
+      });
+      W += sgn;
+    } else {
+      addProfile((x, tt) => sgn * K(x - x0 - u * tt));
+    }
+  }
+  function addBreather(x0, Om, u) {
+    const w = localW(x0), lg = 1 / Math.sqrt(1 - u * u), q = Math.sqrt(1 - Om * Om);
+    addProfile((x, tt) => {
+      const d = wrapDist(x, x0);
+      const X = w * lg * (d - u * tt), T = w * lg * (tt - u * d);
+      return 4 * Math.atan((q / Om) * Math.sin(Om * T) / Math.cosh(q * X));
+    });
+  }
+  function addPlasma(x0, u, A) {
+    // wavenumber chosen so that the group velocity k / omega equals u (c-bar = 1)
+    const w = localW(x0), k = w * u / Math.sqrt(1 - u * u), om = Math.sqrt(w * w + k * k), sig = 3 / w;
+    addProfile((x, tt) => {
+      const d = wrapDist(x, x0);
+      return A * Math.cos(k * d - om * tt) * Math.exp(-((d - (k / om) * tt) ** 2) / (2 * sig * sig));
+    });
+  }
+  // p = { x, u, Om, A }: position, velocity, breather frequency, plasma-wave amplitude
+  function addExc(p) {
+    const x = Math.max(0, Math.min(Nv * H_STEP, p.x));
+    if (S.place === "fluxon") addKink(x, 1, p.u);
+    else if (S.place === "antifluxon") addKink(x, -1, p.u);
+    else if (S.place === "breather") addBreather(x, p.Om, p.u);
+    else addPlasma(x, p.u, p.A);
+  }
+  function placeAt(p) { addExc(p); drawAll(); }
+  // A drag sets the velocity sideways and, for breathers and plasma waves, the amplitude up and down.
+  // A breather's peak phase is 4 arccos(Omega/omega_p), so dragging up raises the peak and lowers Omega.
+  function dragParams(d) {
+    const dy = d.py - d.py0;
+    const A0 = 4 * Math.acos(S.Om);
+    const Ab = Math.max(4 * Math.acos(0.95), Math.min(4 * Math.acos(0.1), A0 - dy * Math.PI / 100));
+    return {
+      x: pxToX(d.px0, d.w), u: uFromDrag(d.px - d.px0),
+      Om: Math.cos(Ab / 4), Ab,
+      A: Math.max(0.02, Math.min(2, S.Apl * Math.exp(-dy / 80))),
+    };
+  }
+  // While a drag is in progress, draw the line as it would be after release, then restore it.
+  function previewDraw() {
+    if (!drag) { drawAll(); return; }
+    const sp = phi.slice(), sv = vel.slice(), sW = W;
+    addExc(dragParams(drag));
+    drawDials(); drawPhi(); drawVF();
+    phi.set(sp); vel.set(sv); W = sW;
+  }
+
+  // ---- profiles ----
+  function smoothStep(x, a, wdt) { return 0.5 * (1 + Math.tanh((x - a) / wdt)); }
+  function applyPreset(name) {
+    const L = (Nv - (periodic ? 0 : 1)) * H_STEP;
+    for (let i = 0; i < Nv; i++) {
+      const x = i * H_STEP;
+      let z = 1, w = 1;
+      const mid = smoothStep(x, 0.375 * L, 0.6) * (1 - smoothStep(x, 0.625 * L, 0.6));
+      if (name === "zstep") z = Math.exp(Math.log(3) * smoothStep(x, 0.5 * L, 0.6));
+      if (name === "zisland") z = Math.exp(Math.log(4) * mid);
+      if (name === "ztaper") z = Math.exp(Math.log(4) * Math.min(1, Math.max(0, (x - 0.2 * L) / (0.6 * L))));
+      if (name === "wbarrier") w = Math.exp(Math.log(1.6) * mid);
+      if (name === "wwell") w = Math.exp(Math.log(0.6) * mid);
+      Zp[i] = z; Wp[i] = w;
+    }
+    coefficients();
+    drawAll();
+  }
+  function paint(arr, x0, val) {
+    const b = S.brush;
+    for (let i = 0; i < Nv; i++) {
+      let d = Math.abs(i * H_STEP - x0);
+      if (periodic) { const L = Nv * H_STEP; d = Math.min(d, L - d); }
+      let wgt = d < b / 2 ? 1 : Math.exp(-(((d - b / 2) / (0.15 * b + H_STEP)) ** 2));
+      if (wgt < 1e-3) continue;
+      arr[i] = Math.exp(Math.log(arr[i]) * (1 - wgt) + Math.log(val) * wgt);
+    }
+    coefficients();
+  }
+
+  // ---- example ----
+  function example() {
+    S.left = "open"; S.right = "absorbing"; S.H = 0; S.gamma = 0; S.alpha = 0.01; S.L = 80;
+    Zp = null; Wp = null; phi = null; Nv = 0;
+    syncControls();
+    build();
+    applyPreset("uniform");
+    t = 0;
+    addKink(12, 1, 0.5);
+    addBreather(26, 0.6, 0);
+    drawAll();
+  }
+  function groundState() {
+    phi.fill(0); vel.fill(0); W = 0; t = 0; mapReset(); drawAll();
+  }
+
+  // ---- theme ----
+  let C = {};
+  function readTheme() {
+    const cs = getComputedStyle(document.documentElement);
+    for (const k of ["bg", "panel", "ink", "ink2", "line", "grid", "phi", "volt", "field", "zcol", "wcol", "pos", "neg", "mid"]) C[k] = cs.getPropertyValue("--" + k).trim();
+    C.posRGB = hexRGB(C.pos); C.negRGB = hexRGB(C.neg); C.midRGB = hexRGB(C.mid);
+    mapReset();
+  }
+  function hexRGB(h) { h = h.replace("#", ""); if (h.length === 3) h = h.split("").map(c => c + c).join(""); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; }
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { readTheme(); drawAll(); });
+  new MutationObserver(() => { readTheme(); drawAll(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  // ---- canvases ----
+  const cv = {};
+  for (const id of ["dials", "phiplot", "vfplot", "map", "zprof", "wprof"]) cv[id] = $(id);
+  const DPR = () => Math.min(2, window.devicePixelRatio || 1);
+  function fit(c) {
+    const r = c.getBoundingClientRect(), d = DPR();
+    const w = Math.max(10, Math.round(r.width * d)), h = Math.max(10, Math.round(r.height * d));
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    const ctx = c.getContext("2d"); ctx.setTransform(d, 0, 0, d, 0, 0);
+    return { ctx, w: r.width, h: r.height };
+  }
+  const PAD = { l: 44, r: 10, t: 8, b: 20 };
+  const Lvis = () => (Nv - (periodic ? 0 : 1)) * H_STEP;
+  const xToPx = (x, w) => PAD.l + (w - PAD.l - PAD.r) * x / Lvis();
+  const pxToX = (px, w) => (px - PAD.l) / (w - PAD.l - PAD.r) * Lvis();
+
+  function frame(ctx, w, h, xlabels) {
+    ctx.fillStyle = C.panel; ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
+    ctx.font = "11px " + getComputedStyle(document.body).fontFamily;
+    ctx.fillStyle = C.ink2; ctx.textAlign = "center"; ctx.textBaseline = "top";
+    const L = Lvis(), stepX = L <= 20 ? 2 : L <= 40 ? 5 : L <= 100 ? 10 : 20;
+    for (let x = 0; x <= L + 1e-9; x += stepX) {
+      const px = xToPx(x, w);
+      ctx.beginPath(); ctx.moveTo(px, PAD.t); ctx.lineTo(px, h - PAD.b); ctx.stroke();
+      if (xlabels) ctx.fillText(String(x), px, h - PAD.b + 4);
+    }
+  }
+
+  function piLabel(k) {
+    if (k === 0) return "0";
+    if (k === 1) return "π"; if (k === -1) return "−π";
+    return (k < 0 ? "−" : "") + Math.abs(k) + "π";
+  }
+
+  const wrapPi = (p) => p - TWO_PI * Math.floor((p + Math.PI) / TWO_PI);
+  function drawPhi() {
+    // phase modulo 2*pi on an axis running exactly from -pi to pi; a 2*pi winding shows as a jump
+    const { ctx, w, h } = fit(cv.phiplot);
+    const yPx = (y) => PAD.t + (h - PAD.t - PAD.b) * (0.5 - 0.5 * y / Math.PI);
+    frame(ctx, w, h, true);
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    const ticks = [[-2, "−π"], [-1, "−π/2"], [0, "0"], [1, "π/2"], [2, "π"]];
+    for (const [q, lab] of ticks) {
+      const py = yPx(q * Math.PI / 2);
+      ctx.strokeStyle = q === 0 ? C.line : C.grid;
+      ctx.beginPath(); ctx.moveTo(PAD.l, py); ctx.lineTo(w - PAD.r, py); ctx.stroke();
+      ctx.fillStyle = C.ink2; ctx.fillText(lab, PAD.l - 6, py);
+    }
+    ctx.strokeStyle = C.phi; ctx.lineWidth = 2; ctx.beginPath();
+    let prev = null;
+    for (let i = 0; i < Nv; i++) {
+      const p = wrapPi(phi[nb0 + i]);
+      const px = xToPx(i * H_STEP, w), py = yPx(p);
+      if (prev === null || Math.abs(p - prev) > Math.PI) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      prev = p;
+    }
+    ctx.stroke();
+    ctx.fillStyle = C.ink2; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+    const f0 = ctx.font, sub = "J0", sw = (ctx.font = "9px " + f0.split("px ")[1], ctx.measureText(sub).width);
+    ctx.fillText(sub, w - PAD.r, h); ctx.font = f0;
+    ctx.fillText("x / λ", w - PAD.r - sw - 1, h - 2);
+    dragArrow(ctx, "phiplot", h * 0.5);
+  }
+
+  let vfScale = 1;
+  // Computes the field phi_x for the space-time map; draws the voltage and field plot only if it exists.
+  function drawVF() {
+    let m = 0.5;
+    const fx = new Float64Array(Nv);
+    for (let i = 0; i < Nv; i++) {
+      const g = nb0 + i;
+      const a = g > 0 ? phi[g] - phi[g - 1] : 0, b = g < M - 1 ? phi[g + 1] - phi[g] : 0;
+      let d = (g > 0 && g < M - 1) ? (a + b) / (2 * H_STEP) : (g > 0 ? a : b) / H_STEP;
+      if (periodic && (i === 0 || i === Nv - 1)) {
+        const nxt = i === Nv - 1 ? phi[0] + TWO_PI * W : phi[1];
+        const prv = i === 0 ? phi[M - 1] - TWO_PI * W : phi[M - 2];
+        d = (nxt - prv) / (2 * H_STEP);
+      }
+      fx[i] = d;
+      m = Math.max(m, Math.abs(d), Math.abs(vel[g]));
+    }
+    lastField = fx;
+    if (!cv.vfplot) return;
+    const { ctx, w, h } = fit(cv.vfplot);
+    const target = Math.pow(2, Math.ceil(Math.log2(m * 1.1)));
+    vfScale += (target - vfScale) * 0.15;
+    const yPx = (y) => PAD.t + (h - PAD.t - PAD.b) * (0.5 - 0.5 * y / vfScale);
+    frame(ctx, w, h, true);
+    ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillStyle = C.ink2;
+    for (const y of [-vfScale, -vfScale / 2, 0, vfScale / 2, vfScale]) {
+      const py = yPx(y);
+      ctx.strokeStyle = y === 0 ? C.line : C.grid;
+      ctx.beginPath(); ctx.moveTo(PAD.l, py); ctx.lineTo(w - PAD.r, py); ctx.stroke();
+      ctx.fillText(fmtTick(y), PAD.l - 6, py);
+    }
+    for (const [arr, col, off] of [[fx, C.field, 0], [vel, C.volt, nb0]]) {
+      ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.beginPath();
+      for (let i = 0; i < Nv; i++) {
+        const px = xToPx(i * H_STEP, w), py = yPx(arr[off + i]);
+        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.stroke();
+    }
+    lastField = fx;
+  }
+  function fmtTick(y) { const a = Math.abs(y); return (y < 0 ? "−" : "") + (a >= 10 ? a.toFixed(0) : a >= 1 ? a.toFixed(a % 1 ? 1 : 0) : a.toFixed(2)); }
+  let lastField = null;
+
+  // Pendula on a torsion wire, drawn as in Fig. 3 of the review: pendulum n hangs at angle
+  // phi_n and swings in the plane across the wire; the depth axis is drawn obliquely
+  // (screen x += KX * depth, screen y += KY * depth), and far bobs are drawn first and smaller.
+  const KX = 0.5, KY = 0.42;
+  function drawDials() {
+    const { ctx, w, h } = fit(cv.dials);
+    ctx.fillStyle = C.panel; ctx.fillRect(0, 0, w, h);
+    const usable = w - PAD.l - PAD.r;
+    const n = Math.max(24, Math.min(160, Math.floor(usable / 6)));
+    const R = (h - 16) / 2;                      // rod length in px: a pendulum pointing straight up or down just fits
+    const wireY = 8 + R;                         // pivot line
+    const pts = [];
+    for (let k = 0; k < n; k++) {
+      const x = Lvis() * (k + 0.5) / n, px = xToPx(x, w);
+      const i = Math.min(Nv - 1, Math.round(x / H_STEP)), p = phi[nb0 + i];
+      const depth = R * Math.sin(p), down = R * Math.cos(p);
+      pts.push({ px, bx: px + KX * depth, by: wireY + down - KY * depth, depth });
+    }
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 2.2; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(PAD.l - 4, wireY); ctx.lineTo(w - PAD.r + 4, wireY); ctx.stroke();
+    pts.sort((a, b) => b.depth - a.depth);
+    const r0 = Math.max(2, Math.min(4.2, usable / n * 0.45));
+    for (const q of pts) {
+      ctx.strokeStyle = C.ink2; ctx.lineWidth = 0.9;
+      ctx.beginPath(); ctx.moveTo(q.px, wireY); ctx.lineTo(q.bx, q.by); ctx.stroke();
+      ctx.fillStyle = C.phi; ctx.strokeStyle = C.panel; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.arc(q.bx, q.by, r0 * (1 - 0.3 * q.depth / R), 0, TWO_PI); ctx.fill(); ctx.stroke();
+    }
+    dragArrow(ctx, "dials", h - 12);
+  }
+
+  // ---- click, drag and release to place an excitation with a velocity ----
+  const DRAG_PX = 160;                 // drag length in px that would mean u = 1
+  let drag = null;                     // { id, px0, px, w } while the pointer is down
+  const uFromDrag = (d) => Math.abs(d) < 4 ? 0 : Math.max(-0.95, Math.min(0.95, d / DRAG_PX));
+  function dragArrow(ctx, id, y) {
+    if (!drag || drag.id !== id) return;
+    const u = uFromDrag(drag.px - drag.px0), x1 = drag.px0 + u * DRAG_PX;
+    ctx.strokeStyle = C.ink; ctx.fillStyle = C.ink; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(drag.px0, y, 4, 0, TWO_PI); ctx.fill();
+    if (u !== 0) {
+      const s = Math.sign(u);
+      ctx.beginPath(); ctx.moveTo(drag.px0, y); ctx.lineTo(x1, y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x1 + 2 * s, y); ctx.lineTo(x1 - 8 * s, y - 5); ctx.lineTo(x1 - 8 * s, y + 5); ctx.closePath(); ctx.fill();
+    }
+    ctx.font = "600 12px " + getComputedStyle(document.body).fontFamily;
+    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    const p = dragParams(drag);
+    let label = u === 0 ? "at rest" : "u = " + u.toFixed(2);
+    if (S.place === "breather") label += ", Ω = " + p.Om.toFixed(2) + " ωp, peak " + p.Ab.toFixed(2) + " rad";
+    if (S.place === "plasma") label += ", amplitude " + p.A.toFixed(2) + " rad";
+    const tw = ctx.measureText(label).width + 10, lx = (drag.px0 + x1) / 2;
+    ctx.fillStyle = C.panel; ctx.fillRect(lx - tw / 2, y - 26, tw, 17);
+    ctx.fillStyle = C.ink; ctx.fillText(label, lx, y - 10);
+  }
+
+  // space-time map: offscreen buffer one column per grid cell, rows scroll down
+  const MAP_ROWS = 220;
+  let mapOff = null, mapCtx = null, mapCols = 0;
+  function mapReset() {
+    mapCols = Math.min(Nv, 600);
+    mapOff = document.createElement("canvas"); mapOff.width = mapCols; mapOff.height = MAP_ROWS;
+    mapCtx = mapOff.getContext("2d");
+    if (C.midRGB) { mapCtx.fillStyle = C.mid; mapCtx.fillRect(0, 0, mapCols, MAP_ROWS); }
+  }
+  function colorFor(s) {
+    s = Math.max(-1, Math.min(1, s));
+    const a = Math.abs(s), end = s >= 0 ? C.posRGB : C.negRGB;
+    return [C.midRGB[0] + (end[0] - C.midRGB[0]) * a, C.midRGB[1] + (end[1] - C.midRGB[1]) * a, C.midRGB[2] + (end[2] - C.midRGB[2]) * a];
+  }
+  function mapPush() {
+    if (!mapCtx || !lastField) return;
+    mapCtx.drawImage(mapOff, 0, 1);
+    const row = mapCtx.createImageData(mapCols, 1);
+    for (let c = 0; c < mapCols; c++) {
+      const i = Math.min(Nv - 1, Math.round(c * (Nv - 1) / Math.max(1, mapCols - 1)));
+      const val = S.mapQ === "field" ? lastField[i] / 2 : vel[nb0 + i] / 2;
+      const [r, g, b] = colorFor(val);
+      row.data[4 * c] = r; row.data[4 * c + 1] = g; row.data[4 * c + 2] = b; row.data[4 * c + 3] = 255;
+    }
+    mapCtx.putImageData(row, 0, 0);
+  }
+  function drawMap() {
+    const { ctx, w, h } = fit(cv.map);
+    frame(ctx, w, h, true);
+    if (mapOff) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(mapOff, PAD.l, PAD.t, w - PAD.l - PAD.r, h - PAD.t - PAD.b);
+    }
+    ctx.fillStyle = C.ink2; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.save(); ctx.translate(12, (h - PAD.b + PAD.t) / 2); ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = "center"; ctx.fillText("time ↓", 0, 0); ctx.restore();
+  }
+
+  function drawProfile(c, arr, lo, hi, col, ticks) {
+    const { ctx, w, h } = fit(c);
+    frame(ctx, w, h, false);
+    const yPx = (v) => PAD.t + (h - PAD.t - 6) * (1 - (Math.log(v) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)));
+    ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillStyle = C.ink2;
+    for (const v of ticks) {
+      const py = yPx(v);
+      ctx.strokeStyle = v === 1 ? C.line : C.grid;
+      ctx.beginPath(); ctx.moveTo(PAD.l, py); ctx.lineTo(w - PAD.r, py); ctx.stroke();
+      ctx.fillText(String(v), PAD.l - 6, py);
+    }
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath();
+    for (let i = 0; i < Nv; i++) {
+      const px = xToPx(i * H_STEP, w), py = yPx(arr[i]);
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.stroke();
+    return { yToVal: (py) => Math.exp(Math.log(lo) + (1 - (py - PAD.t) / (h - PAD.t - 6)) * (Math.log(hi) - Math.log(lo))) };
+  }
+  const profMap = {};
+  function drawProfiles() {
+    profMap.zprof = drawProfile(cv.zprof, Zp, Z_MIN, Z_MAX, C.zcol, [0.25, 1, 4]);
+    profMap.wprof = drawProfile(cv.wprof, Wp, W_MIN, W_MAX, C.wcol, [0.25, 1, 3]);
+  }
+
+  function drawAll() { drawDials(); drawPhi(); drawVF(); drawMap(); drawProfiles(); readouts(); }
+
+  // ---- readouts ----
+  function energy() {
+    let E = 0;
+    for (let i = 0; i < Nv; i++) {
+      const g = nb0 + i;
+      let dphi;
+      if (i < Nv - 1) dphi = phi[g + 1] - phi[g];
+      else if (periodic) dphi = phi[0] + TWO_PI * W - phi[g];
+      else continue;
+      const z = Zn[g];
+      E += H_STEP / z * (0.5 * vel[g] * vel[g] + 0.5 * (dphi / H_STEP) ** 2 + wp2[g] * (1 - Math.cos(phi[g])));
+    }
+    return E;
+  }
+  function readouts() {
+    $("ro-t").textContent = t.toFixed(1);
+    const nf = periodic ? W : (phi[nb0 + Nv - 1] - phi[nb0]) / TWO_PI;
+    $("ro-n").textContent = periodic ? String(W) : nf.toFixed(2);
+    $("ro-e").textContent = energy().toFixed(2);
+    let vm = 0; for (let i = 0; i < Nv; i++) vm += vel[nb0 + i]; vm /= Nv;
+    vMeanEMA += (vm - vMeanEMA) * 0.05;
+    $("ro-v").textContent = vMeanEMA.toFixed(3);
+  }
+
+  // ---- loop ----
+  let frameNo = 0;
+  function loop() {
+    if (S.running && !drag) {
+      for (let k = 0; k < S.speed; k++) step();
+      drawDials(); drawPhi(); drawVF(); mapPush(); drawMap();
+      if ((frameNo++ & 7) === 0) readouts();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  // ---- controls ----
+  function setOut(id, txt) { $(id + "-o").textContent = txt; }
+  function syncControls() {
+    $("bcl").value = S.left; $("bcr").value = S.right;
+    $("hfield").value = S.H; setOut("hfield", S.H.toFixed(2));
+    $("len").value = S.L; setOut("len", String(S.L));
+    $("gamma").value = S.gamma; setOut("gamma", S.gamma.toFixed(2));
+    $("alpha").value = alphaToSlider(S.alpha); setOut("alpha", S.alpha.toFixed(3));
+    $("speed").value = S.speed; setOut("speed", S.speed + " steps/frame");
+    $("brush").value = S.brush; setOut("brush", S.brush.toFixed(1));
+    $("run").textContent = S.running ? "Pause" : "Run";
+    $("hfield").disabled = !(S.left === "open" || S.right === "open");
+  }
+  // shunt loss slider: 0 -> 0, then logarithmic from 0.001 to 1
+  function sliderToAlpha(s) { return s <= 0 ? 0 : Math.pow(10, -3 + 3 * s); }
+  function alphaToSlider(a) { return a <= 0 ? 0 : Math.max(0.01, (Math.log10(a) + 3) / 3); }
+
+  function setBC(side, val) {
+    if (val === "periodic") { S.left = S.right = "periodic"; }
+    else {
+      if (side === "left") { S.left = val; if (S.right === "periodic") S.right = "open"; }
+      else { S.right = val; if (S.left === "periodic") S.left = "open"; }
+    }
+    syncControls(); build(); drawAll();
+  }
+  $("bcl").addEventListener("change", (e) => setBC("left", e.target.value));
+  $("bcr").addEventListener("change", (e) => setBC("right", e.target.value));
+  $("hfield").addEventListener("input", (e) => { S.H = +e.target.value; setOut("hfield", S.H.toFixed(2)); });
+  $("len").addEventListener("input", (e) => { S.L = +e.target.value; setOut("len", String(S.L)); build(); drawAll(); });
+  $("gamma").addEventListener("input", (e) => { S.gamma = +e.target.value; setOut("gamma", S.gamma.toFixed(2)); });
+  $("hfield-zero").addEventListener("click", () => { S.H = 0; syncControls(); });
+  $("gamma-zero").addEventListener("click", () => { S.gamma = 0; syncControls(); });
+  $("z-reset").addEventListener("click", () => { Zp.fill(1); coefficients(); drawProfiles(); });
+  $("w-reset").addEventListener("click", () => { Wp.fill(1); coefficients(); drawProfiles(); });
+  $("alpha").addEventListener("input", (e) => { S.alpha = sliderToAlpha(+e.target.value); setOut("alpha", S.alpha.toFixed(3)); coefficients(); });
+  $("speed").addEventListener("input", (e) => { S.speed = +e.target.value; setOut("speed", S.speed + " steps/frame"); });
+  $("brush").addEventListener("input", (e) => { S.brush = +e.target.value; setOut("brush", S.brush.toFixed(1)); });
+  $("mapq").addEventListener("change", (e) => {
+    S.mapQ = e.target.value; mapReset();
+    $("map-hint").innerHTML = (S.mapQ === "field" ? "field φ<sub>x</sub>" : "voltage φ<sub>t</sub>") + "; newest at the top";
+  });
+  $("preset").addEventListener("change", (e) => { if (e.target.value) applyPreset(e.target.value); e.target.value = ""; });
+  $("run").addEventListener("click", () => { S.running = !S.running; syncControls(); });
+  $("stepbtn").addEventListener("click", () => { for (let k = 0; k < S.speed; k++) step(); drawAll(); mapPush(); drawMap(); });
+  $("reset").addEventListener("click", groundState);
+  $("example").addEventListener("click", example);
+  document.querySelectorAll("[data-place]").forEach((b) => b.addEventListener("click", () => {
+    S.place = b.dataset.place;
+    document.querySelectorAll("[data-place]").forEach((o) => o.setAttribute("aria-pressed", String(o === b)));
+  }));
+  for (const id of ["phiplot", "dials"]) {
+    const c = cv[id];
+    const redraw = previewDraw;
+    c.addEventListener("pointerdown", (e) => {
+      const r = c.getBoundingClientRect();
+      drag = { id, px0: e.clientX - r.left, px: e.clientX - r.left, py0: e.clientY, py: e.clientY, w: r.width };
+      c.setPointerCapture(e.pointerId); redraw();
+    });
+    c.addEventListener("pointermove", (e) => {
+      if (!drag || drag.id !== id) return;
+      drag.px = e.clientX - c.getBoundingClientRect().left; drag.py = e.clientY; redraw();
+    });
+    c.addEventListener("pointerup", () => {
+      if (!drag || drag.id !== id) return;
+      const p = dragParams(drag); drag = null;
+      if (S.place === "breather") S.Om = p.Om;
+      if (S.place === "plasma") S.Apl = p.A;
+      placeAt(p);
+    });
+    c.addEventListener("pointercancel", () => { drag = null; redraw(); });
+    c.addEventListener("keydown", (e) => { if (e.key === "Enter") placeAt({ x: Lvis() / 2, u: 0, Om: S.Om, A: S.Apl }); });
+  }
+  for (const id of ["zprof", "wprof"]) {
+    const c = cv[id];
+    let down = false;
+    const act = (e) => {
+      const r = c.getBoundingClientRect();
+      const x = pxToX(e.clientX - r.left, r.width);
+      let val = profMap[id].yToVal(e.clientY - r.top);
+      if (id === "zprof") { val = Math.min(Z_MAX, Math.max(Z_MIN, val)); paint(Zp, x, val); }
+      else { val = Math.min(W_MAX, Math.max(W_MIN, val)); paint(Wp, x, val); }
+      drawProfiles();
+    };
+    c.addEventListener("pointerdown", (e) => { down = true; c.setPointerCapture(e.pointerId); act(e); });
+    c.addEventListener("pointermove", (e) => { if (down) act(e); });
+    c.addEventListener("pointerup", () => { down = false; });
+    c.addEventListener("pointercancel", () => { down = false; });
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === " " && !/INPUT|SELECT|BUTTON|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); S.running = !S.running; syncControls(); }
+  });
+  new ResizeObserver(() => drawAll()).observe(document.querySelector(".plots"));
+
+  // ---- start ----
+  readTheme();
+  example();
+  syncControls();
+  drawAll();
+  requestAnimationFrame(loop);
+})();
+</script>
+
+</html>
