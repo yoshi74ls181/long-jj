@@ -158,8 +158,8 @@ b.bc { font-weight: 600; }
         <legend>Run and drive</legend>
         <div class="btns">
           <button class="primary" id="run" type="button">Pause</button>
-          <button id="reset" type="button">Ground state</button>
-          <button id="restore" type="button" disabled title="Go back to the state the simulation was in when Run was last pressed, paused">Back to start of run</button>
+          <button id="reset" type="button" title="Set the line to its ground state, phase 0 everywhere, at t = 0, paused">Reset</button>
+          <button id="restore" type="button" disabled title="Go back to the state at time 0, paused">Back to t=0</button>
         </div>
         <div class="row">
           <label for="speed"><span>Simulation speed</span> <output id="speed-o"></output></label>
@@ -871,7 +871,7 @@ b.bc { font-weight: 600; }
   $("mapq").addEventListener("change", (e) => setMapQ(e.target.value));
   $("preset").addEventListener("change", (e) => { if (e.target.value) applyPreset(e.target.value); e.target.value = ""; });
   $("run").addEventListener("click", toggleRun);
-  $("reset").addEventListener("click", () => { groundState(); if (S.running) saveRunStart(); });
+  $("reset").addEventListener("click", () => { S.running = false; syncControls(); groundState(); saveRunStart(); });
   document.querySelectorAll("[data-place]").forEach((b) => b.addEventListener("click", () => setPlace(b.dataset.place)));
   for (const id of ["phiplot", "dials"]) {
     const c = cv[id];
@@ -961,12 +961,13 @@ b.bc { font-weight: 600; }
     for (let i = 0; i < Nv; i++) { Zp[i] = ql(Zp[i], Z_MIN, Z_MAX); Wp[i] = ql(Wp[i], W_MIN, W_MAX); }
     coefficients();
   }
+  const stateHeader = () => ({
+    L: S.L, left: S.left, right: S.right, H: S.H, gamma: S.gamma, Ipt: S.Ipt, xptF: S.xptF, alpha: S.alpha,
+    speed: S.speed, place: S.place, u: S.u, Om: S.Om, Apl: S.Apl, brush: S.brush, mapQ: S.mapQ, W, t,
+  });
   function encodeState() {
     quantizeInPlace();
-    const hdr = {
-      L: S.L, left: S.left, right: S.right, H: S.H, gamma: S.gamma, Ipt: S.Ipt, xptF: S.xptF, alpha: S.alpha,
-      speed: S.speed, place: S.place, u: S.u, Om: S.Om, Apl: S.Apl, brush: S.brush, mapQ: S.mapQ, W, t,
-    };
+    const hdr = stateHeader();
     const js = new TextEncoder().encode(JSON.stringify(hdr));
     const out = [SHARE_V];
     putVar(out, js.length);
@@ -1048,6 +1049,7 @@ b.bc { font-weight: 600; }
       let raw;
       try { raw = await zip(fromB64u(m[1]), true); } catch (e) { throw new Error("it looks damaged or cut short"); }
       applyState(decodeState(raw));
+      saveRunStart();
       shareNote("Loaded a shared state at ωₚ₀t = " + t.toFixed(1) + ". Press Run to start it.");
       return true;
     } catch (e) {
@@ -1056,19 +1058,21 @@ b.bc { font-weight: 600; }
     }
   }
   // ---- back to the start of the run ----
-  // Starting the simulation saves the state, in the same form as a share link, so the button can
-  // bring it back paused and a rerun repeats the same evolution exactly.
+  // The state at t = 0 is saved as an exact copy, so the button can bring it back paused and a
+  // rerun repeats the same evolution exactly. It is saved when the page opens, on Reset
+  // and on Run while the clock still reads 0, so changes made before the first Run are kept.
+  // A shared link that was made mid-run has no t = 0, so there the loaded state is the start.
   let runStart = null;
   function saveRunStart() {
-    runStart = encodeState();
+    runStart = { hdr: stateHeader(), phiA: phi.slice(), velA: vel.slice(), ZpA: Zp.slice(), WpA: Wp.slice() };
     $("restore").disabled = false;
-    $("restore").textContent = "Back to start of run (ωₚ₀t = " + t.toFixed(1) + ")";
+    $("restore").textContent = "Back to t=" + (t === 0 ? "0" : t.toFixed(1));
   }
   function toggleRun() {
-    if (!S.running) saveRunStart();
+    if (!S.running && t === 0) saveRunStart();
     S.running = !S.running; syncControls();
   }
-  $("restore").addEventListener("click", () => { if (runStart) applyState(decodeState(runStart), true); });
+  $("restore").addEventListener("click", () => { if (runStart) applyState(runStart, true); });
   $("share").addEventListener("click", share);
   window.addEventListener("hashchange", loadFromHash);
 
@@ -1077,7 +1081,7 @@ b.bc { font-weight: 600; }
   example();
   syncControls();
   drawAll();
-  if (S.running) saveRunStart();
+  saveRunStart();
   loadFromHash();
   requestAnimationFrame(loop);
 })();
