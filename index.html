@@ -193,8 +193,16 @@ b.bc { font-weight: 600; }
           <input id="len" type="range" min="20" max="160" step="10" value="80">
         </div>
         <div class="row">
-          <label for="gamma"><span>Bias γ = j/j<sub>c0</sub></span> <output id="gamma-o"></output></label>
-          <div class="slider"><input id="gamma" type="range" min="-1.2" max="1.2" step="0.01" value="0"><button type="button" class="zero" id="gamma-zero" aria-label="Set the bias to zero">Zero</button></div>
+          <label for="gamma"><span>Uniform bias γ = j/j<sub>c0</sub></span> <output id="gamma-o"></output></label>
+          <div class="slider"><input id="gamma" type="range" min="-1.2" max="1.2" step="0.01" value="0"><button type="button" class="zero" id="gamma-zero" aria-label="Set the uniform bias to zero">Zero</button></div>
+        </div>
+        <div class="row">
+          <label for="ipt"><span>Point bias I/(j<sub>c0</sub>λ<sub>J0</sub>)</span> <output id="ipt-o"></output></label>
+          <div class="slider"><input id="ipt" type="range" min="-8" max="8" step="0.05" value="0"><button type="button" class="zero" id="ipt-zero" aria-label="Set the point bias to zero">Zero</button></div>
+        </div>
+        <div class="row">
+          <label for="xpt"><span>Point bias position x<sub>0</sub>/λ<sub>J0</sub></span> <output id="xpt-o"></output></label>
+          <input id="xpt" type="range" min="0" max="1" step="0.0025" value="0.5">
         </div>
         <div class="row">
           <label for="alpha"><span>Shunt loss α</span> <output id="alpha-o"></output></label>
@@ -236,9 +244,10 @@ b.bc { font-weight: 600; }
   <section class="model">
     <div class="card">
       <h3>The equation being solved</h3>
-      <p class="eq">φ<sub>tt</sub> + α φ<sub>t</sub> = Z ∂<sub>x</sub>(Z<sup>−1</sup> ∂<sub>x</sub>φ) − ω<sub>p</sub><sup>2</sup> sin φ + γ Z</p>
+      <p class="eq">φ<sub>tt</sub> + α φ<sub>t</sub> = Z ∂<sub>x</sub>(Z<sup>−1</sup> ∂<sub>x</sub>φ) − ω<sub>p</sub><sup>2</sup> sin φ + γ Z + I Z δ(x − x<sub>0</sub>)</p>
       <p>Position is in Josephson lengths λ<sub>J0</sub> and time in units of 1/ω<sub>p0</sub>, both at the reference values Z<sub>0</sub> and ω<sub>p0</sub>. Z(x) and ω<sub>p</sub>(x) are the local line impedance and plasma frequency relative to that reference. The Swihart velocity c̄ stays uniform, so the local Josephson length is c̄/ω<sub>p</sub>. The energy is in units of E<sub>0</sub>, the Josephson energy stored in one λ<sub>J0</sub> of the reference line, so a fluxon at rest on it has energy 8. A fluxon's rest energy scales as 8ω<sub>p</sub>/Z: fluxons are pushed towards low plasma frequency and high impedance, and an impedance step reflects plasma waves.</p>
-      <p class="note">The line is discretized at λ<sub>J0</sub>/20 and stepped with a time step of 0.02/ω<sub>p0</sub>; the shunt loss is treated implicitly.</p>
+      <p>The bias has two parts. The uniform bias γ is a current density, fed evenly along the line. The point bias I is a total current, in units of j<sub>c0</sub>λ<sub>J0</sub>, fed in at x<sub>0</sub>; it makes the field φ<sub>x</sub> jump by I Z across x<sub>0</sub>, so it pushes fluxons and antifluxons apart from that point. The field of a static twist on a uniform line cannot exceed 2 on either side, so a point bias above I = 4 has no static state: it nucleates fluxon–antifluxon pairs, which leave in opposite directions.</p>
+      <p class="note">The line is discretized at λ<sub>J0</sub>/20 and stepped with a time step of 0.02/ω<sub>p0</sub>; the shunt loss is treated implicitly. The point bias is spread over a Gaussian of width λ<sub>J0</sub>/4 rather than one grid cell.</p>
     </div>
     <div class="card">
       <h3>What each end does</h3>
@@ -265,13 +274,14 @@ b.bc { font-weight: 600; }
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const S = {
-    L: 80, left: "open", right: "absorbing", H: 0, gamma: 0, alpha: 0.01, speed: 20,
+    L: 80, left: "open", right: "absorbing", H: 0, gamma: 0, Ipt: 0, xptF: 0.5, alpha: 0.01, speed: 20,
     running: !reduceMotion, place: "fluxon", u: 0.5, Om: 0.6, Apl: 0.35, brush: 4, mapQ: "field",
   };
 
   // Grid: visible nodes plus hidden buffers for absorbing ends.
   let periodic = false, Nv = 0, nb0 = 0, nb1 = 0, M = 0;
-  let phi, vel, Zn, Zh, wp2, damp, flux, gfac;
+  let phi, vel, Zn, Zh, wp2, damp, flux, gfac, pfac;
+  const PT_SIG = 0.25;          // width of the point bias Gaussian, lambda_J0
   let Zp = null, Wp = null;     // visible profiles of Z/Z0 and omega_p/omega_p0
   let W = 0, t = 0, vMeanEMA = 0;
 
@@ -303,12 +313,27 @@ b.bc { font-weight: 600; }
       gfac[g] = f;
       damp[g] = S.alpha + 0.3 * s * s;
     }
+    pointFactors();
     if (nb0) damp[0] += 2 / H_STEP;       // matched load on the half cell at the far end
     if (nb1) damp[M - 1] += 2 / H_STEP;
     for (let g = 0; g < M; g++) {
       const g2 = (g + 1) % M;
       Zh[g] = 0.5 * (Zn[g] + Zn[g2]);
     }
+  }
+
+  // Point bias: pfac[g] * I is the current fed in at node g, per unit length, times Z there.
+  // The Gaussian is normalized on the grid so that the total current is exactly I.
+  const xpt = () => S.xptF * Lvis();
+  function pointFactors() {
+    const x0 = xpt();
+    let sum = 0;
+    for (let g = 0; g < M; g++) {
+      pfac[g] = Math.exp(-0.5 * (wrapDist(xOf(g), x0) / PT_SIG) ** 2);
+      const cell = (!periodic && (g === 0 || g === M - 1)) ? H_STEP / 2 : H_STEP;
+      sum += pfac[g] * cell;
+    }
+    for (let g = 0; g < M; g++) pfac[g] = pfac[g] / sum * Zn[g];
   }
 
   function build() {
@@ -321,7 +346,7 @@ b.bc { font-weight: 600; }
     Zp = resample(Zp, Nv); Wp = resample(Wp, Nv);
     phi = new Float64Array(M); vel = new Float64Array(M);
     Zn = new Float64Array(M); Zh = new Float64Array(M); wp2 = new Float64Array(M);
-    damp = new Float64Array(M); flux = new Float64Array(M); gfac = new Float64Array(M);
+    damp = new Float64Array(M); flux = new Float64Array(M); gfac = new Float64Array(M); pfac = new Float64Array(M);
     if (oldPhi && oldNv === Nv) {
       for (let i = 0; i < Nv; i++) { phi[nb0 + i] = oldPhi[oldNb0 + i]; vel[nb0 + i] = oldVel[oldNb0 + i]; }
     } else if (oldPhi) {
@@ -338,7 +363,7 @@ b.bc { font-weight: 600; }
   }
 
   function step() {
-    const n = M, h = H_STEP, g0 = S.gamma;
+    const n = M, h = H_STEP, g0 = S.gamma, I0 = S.Ipt;
     for (let g = 0; g < n - 1; g++) flux[g] = (phi[g + 1] - phi[g]) / (h * Zh[g]);
     let seam = 0;
     if (periodic) seam = (phi[0] + TWO_PI * W - phi[n - 1]) / (h * Zh[n - 1]);
@@ -353,7 +378,7 @@ b.bc { font-weight: 600; }
         if (periodic) Fp = seam;
         else { Fp = rightOpen ? S.H / Zn[n - 1] : 0; cell = h / 2; }
       } else Fp = flux[g];
-      const a = Zn[g] * (Fp - Fm) / cell - wp2[g] * Math.sin(phi[g]) + g0 * Zn[g] * gfac[g];
+      const a = Zn[g] * (Fp - Fm) / cell - wp2[g] * Math.sin(phi[g]) + g0 * Zn[g] * gfac[g] + I0 * pfac[g];
       vel[g] = (vel[g] + DT * a) / (1 + DT * damp[g]);
     }
     if (!periodic) {
@@ -483,7 +508,7 @@ b.bc { font-weight: 600; }
 
   // ---- example ----
   function example() {
-    S.left = "open"; S.right = "absorbing"; S.H = 0; S.gamma = 0; S.alpha = 0.01; S.L = 80;
+    S.left = "open"; S.right = "absorbing"; S.H = 0; S.gamma = 0; S.Ipt = 0; S.xptF = 0.5; S.alpha = 0.01; S.L = 80;
     Zp = null; Wp = null; phi = null; Nv = 0;
     syncControls();
     build();
@@ -567,6 +592,15 @@ b.bc { font-weight: 600; }
       prev = p;
     }
     ctx.stroke();
+    if (S.Ipt !== 0) {
+      // point bias marker: a triangle at the top pointing down for current fed in, up for current drawn out
+      const px = xToPx(xpt(), w), y0 = PAD.t + 1, s = S.Ipt > 0 ? 1 : -1;
+      ctx.fillStyle = C.ink; ctx.beginPath();
+      ctx.moveTo(px - 6, s > 0 ? y0 : y0 + 9); ctx.lineTo(px + 6, s > 0 ? y0 : y0 + 9); ctx.lineTo(px, s > 0 ? y0 + 9 : y0);
+      ctx.closePath(); ctx.fill();
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText("I = " + S.Ipt.toFixed(2), Math.min(px + 9, w - PAD.r - 60), y0);
+    }
     ctx.fillStyle = C.ink2; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
     const f0 = ctx.font, sub = "J0", sw = (ctx.font = "9px " + f0.split("px ")[1], ctx.measureText(sub).width);
     ctx.fillText(sub, w - PAD.r, h); ctx.font = f0;
@@ -782,6 +816,8 @@ b.bc { font-weight: 600; }
     $("hfield").value = S.H; setOut("hfield", S.H.toFixed(2));
     $("len").value = S.L; setOut("len", String(S.L));
     $("gamma").value = S.gamma; setOut("gamma", S.gamma.toFixed(2));
+    $("ipt").value = S.Ipt; setOut("ipt", S.Ipt.toFixed(2));
+    $("xpt").value = S.xptF; setOut("xpt", xpt().toFixed(1));
     $("alpha").value = alphaToSlider(S.alpha); setOut("alpha", S.alpha.toFixed(3));
     $("speed").value = S.speed; setOut("speed", S.speed + " steps/frame");
     $("brush").value = S.brush; setOut("brush", S.brush.toFixed(1));
@@ -805,6 +841,9 @@ b.bc { font-weight: 600; }
   $("hfield").addEventListener("input", (e) => { S.H = +e.target.value; setOut("hfield", S.H.toFixed(2)); });
   $("len").addEventListener("input", (e) => { S.L = +e.target.value; setOut("len", String(S.L)); build(); drawAll(); });
   $("gamma").addEventListener("input", (e) => { S.gamma = +e.target.value; setOut("gamma", S.gamma.toFixed(2)); });
+  $("ipt").addEventListener("input", (e) => { S.Ipt = +e.target.value; setOut("ipt", S.Ipt.toFixed(2)); if (!S.running) drawPhi(); });
+  $("ipt-zero").addEventListener("click", () => { S.Ipt = 0; syncControls(); if (!S.running) drawPhi(); });
+  $("xpt").addEventListener("input", (e) => { S.xptF = +e.target.value; setOut("xpt", xpt().toFixed(1)); pointFactors(); if (!S.running) drawPhi(); });
   $("hfield-zero").addEventListener("click", () => { S.H = 0; syncControls(); });
   $("gamma-zero").addEventListener("click", () => { S.gamma = 0; syncControls(); });
   $("z-reset").addEventListener("click", () => { Zp.fill(1); coefficients(); drawProfiles(); });
