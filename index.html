@@ -90,6 +90,7 @@ legend { font-family: var(--font-head); font-weight: 500; font-size: 0.85rem; pa
 select, button { font: inherit; font-size: 0.85rem; color: var(--ink); background: var(--chip); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
 select { width: 100%; }
 button { cursor: pointer; }
+button:disabled { opacity: 0.45; cursor: default; }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 button:focus-visible, select:focus-visible, input:focus-visible, canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type="range"] { width: 100%; accent-color: var(--accent); }
@@ -103,8 +104,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .note { font-size: 0.78rem; color: var(--ink2); margin: 0; }
 .seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .seg button { padding: 5px 2px; font-size: 0.78rem; }
-.btns { display: grid; grid-template-columns: 4.6em 3.6em max-content minmax(0, 1fr); gap: 6px; }
+.btns { display: grid; grid-template-columns: 4.6em minmax(0, 1fr); gap: 6px; }
 .btns #reset { padding: 5px 8px; }
+.btns #restore { grid-column: 1 / -1; }
 .btns button { padding: 5px 4px; font-size: 0.8rem; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card h2 select.mini { margin-left: auto; width: auto; padding: 2px 6px; font-family: var(--font-body); font-weight: 400; font-size: 0.78rem; }
 #share-url { font-family: var(--font-mono); font-size: 0.75rem; color: var(--ink); background: var(--chip); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; width: 100%; box-sizing: border-box; }
@@ -156,9 +158,8 @@ b.bc { font-weight: 600; }
         <legend>Run and drive</legend>
         <div class="btns">
           <button class="primary" id="run" type="button">Pause</button>
-          <button id="stepbtn" type="button">Step</button>
           <button id="reset" type="button">Ground state</button>
-          <button id="example" type="button" title="Load the example: a fluxon passing a breather">Example</button>
+          <button id="restore" type="button" disabled title="Go back to the state the simulation was in when Run was last pressed, paused">Back to start of run</button>
         </div>
         <div class="row">
           <label for="speed"><span>Simulation speed</span> <output id="speed-o"></output></label>
@@ -869,10 +870,8 @@ b.bc { font-weight: 600; }
   }
   $("mapq").addEventListener("change", (e) => setMapQ(e.target.value));
   $("preset").addEventListener("change", (e) => { if (e.target.value) applyPreset(e.target.value); e.target.value = ""; });
-  $("run").addEventListener("click", () => { S.running = !S.running; syncControls(); });
-  $("stepbtn").addEventListener("click", () => { for (let k = 0; k < S.speed; k++) step(); drawAll(); });
-  $("reset").addEventListener("click", groundState);
-  $("example").addEventListener("click", example);
+  $("run").addEventListener("click", toggleRun);
+  $("reset").addEventListener("click", () => { groundState(); if (S.running) saveRunStart(); });
   document.querySelectorAll("[data-place]").forEach((b) => b.addEventListener("click", () => setPlace(b.dataset.place)));
   for (const id of ["phiplot", "dials"]) {
     const c = cv[id];
@@ -913,7 +912,7 @@ b.bc { font-weight: 600; }
     c.addEventListener("pointercancel", () => { down = false; });
   }
   document.addEventListener("keydown", (e) => {
-    if (e.key === " " && !/INPUT|SELECT|BUTTON|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); S.running = !S.running; syncControls(); }
+    if (e.key === " " && !/INPUT|SELECT|BUTTON|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); toggleRun(); }
   });
   new ResizeObserver(() => drawAll()).observe(document.querySelector(".plots"));
 
@@ -1001,15 +1000,16 @@ b.bc { font-weight: 600; }
     for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
     return u8;
   }
-  function applyState({ hdr: h, phiA, velA, ZpA, WpA }) {
+  function applyState({ hdr: h, phiA, velA, ZpA, WpA }, keepUI) {
     const num = (v, lo, hi, def) => Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def;
     S.L = num(h.L, 5, 400, 80);
     S.left = BCS.includes(h.left) ? h.left : "open";
     S.right = BCS.includes(h.right) ? h.right : "open";
     if (S.left === "periodic" || S.right === "periodic") S.left = S.right = "periodic";
     S.H = num(h.H, -100, 100, 0); S.gamma = num(h.gamma, -100, 100, 0); S.Ipt = num(h.Ipt, -1000, 1000, 0);
-    S.xptF = num(h.xptF, 0, 1, 0.5); S.alpha = num(h.alpha, 0, 100, 0.01); S.speed = Math.round(num(h.speed, 1, 60, 20));
-    S.u = num(h.u, -0.95, 0.95, 0.5); S.Om = num(h.Om, 0.05, 0.99, 0.6); S.Apl = num(h.Apl, 0.02, 2, 0.35); S.brush = num(h.brush, 0.5, 20, 4);
+    S.xptF = num(h.xptF, 0, 1, 0.5); S.alpha = num(h.alpha, 0, 100, 0.01);
+    if (!keepUI) S.speed = Math.round(num(h.speed, 1, 60, 20));
+    if (!keepUI) { S.u = num(h.u, -0.95, 0.95, 0.5); S.Om = num(h.Om, 0.05, 0.99, 0.6); S.Apl = num(h.Apl, 0.02, 2, 0.35); S.brush = num(h.brush, 0.5, 20, 4); }
     Zp = null; Wp = null; phi = null; Nv = 0;
     build();
     if (phiA.length !== M || velA.length !== M || ZpA.length !== Nv || WpA.length !== Nv) throw new Error("link data does not match the line length");
@@ -1018,8 +1018,8 @@ b.bc { font-weight: 600; }
     phi.set(phiA); vel.set(velA);
     W = periodic ? Math.round(num(h.W, -1e6, 1e6, 0)) : 0;
     t = num(h.t, 0, 1e12, 0); vMeanEMA = 0;
-    setPlace(["fluxon", "antifluxon", "breather", "plasma"].includes(h.place) ? h.place : "fluxon");
-    setMapQ(h.mapQ === "volt" ? "volt" : "field");
+    if (!keepUI) setPlace(["fluxon", "antifluxon", "breather", "plasma"].includes(h.place) ? h.place : "fluxon");
+    setMapQ(keepUI ? S.mapQ : h.mapQ === "volt" ? "volt" : "field");
     S.running = false;
     syncControls();
     drawAll();
@@ -1055,6 +1055,20 @@ b.bc { font-weight: 600; }
       return false;
     }
   }
+  // ---- back to the start of the run ----
+  // Starting the simulation saves the state, in the same form as a share link, so the button can
+  // bring it back paused and a rerun repeats the same evolution exactly.
+  let runStart = null;
+  function saveRunStart() {
+    runStart = encodeState();
+    $("restore").disabled = false;
+    $("restore").textContent = "Back to start of run (ωₚ₀t = " + t.toFixed(1) + ")";
+  }
+  function toggleRun() {
+    if (!S.running) saveRunStart();
+    S.running = !S.running; syncControls();
+  }
+  $("restore").addEventListener("click", () => { if (runStart) applyState(decodeState(runStart), true); });
   $("share").addEventListener("click", share);
   window.addEventListener("hashchange", loadFromHash);
 
@@ -1063,6 +1077,7 @@ b.bc { font-weight: 600; }
   example();
   syncControls();
   drawAll();
+  if (S.running) saveRunStart();
   loadFromHash();
   requestAnimationFrame(loop);
 })();
